@@ -10,7 +10,7 @@ data class CompoundResult<out T>(val subResults: List<Result<T>>): Result<T>, It
     val size: Int
         get() = subResults.size
 
-    fun get(index: Int) = subResults[index]
+    operator fun get(index: Int) = subResults[index]
     fun isEmpty() = subResults.isEmpty()
     fun isNotEmpty() = !isEmpty()
     override operator fun iterator() = subResults.iterator()
@@ -56,81 +56,54 @@ abstract class Parser<out T, in F>{
     }
 }
 
-internal class EmptyParser<out T>: Parser<T, Any?>(){
-    private inner class Instance(tokens: List<Token>, pos: Int): MatcherInstance<T, Any?>(tokens, pos){
+abstract class WrappedParser<T, F>: Parser<T, F>(){
+    protected abstract val internalParser: Parser<T, F>
+    override fun createInstance(tokens: List<Token>, pos: Int): MatcherInstance<T, F> {
+        return internalParser.createInstance(tokens, pos)
+    }
+}
+
+class EmptyParser<T, F>: Parser<T, F>(){
+    private inner class Instance(tokens: List<Token>, pos: Int): MatcherInstance<T, F>(tokens, pos){
         override var end: Int? = pos
 
         override fun internalTryAgain() {
             end = null
         }
 
-        override fun getResult(flags: Any?): Result<T> {
+        override fun getResult(flags: F): Result<T> {
             return CompoundResult(emptyList())
         }
     }
-    override fun createInstance(tokens: List<Token>, pos: Int): MatcherInstance<T, Any?> {
+    override fun createInstance(tokens: List<Token>, pos: Int): MatcherInstance<T, F> {
         return Instance(tokens, pos)
     }
 }
 
-class TokenParser<out T>(val tokenPredicate: TokenPredicate): Parser<T, Any?>(){
-    private inner class Instance(tokens: List<Token>, pos: Int): MatcherInstance<T, Any?>(tokens, pos){
+class TokenParser<T, F>(val tokenPredicate: TokenPredicate): Parser<T, F>(){
+    private inner class Instance(tokens: List<Token>, pos: Int): MatcherInstance<T, F>(tokens, pos){
         override var end: Int? = if (pos < tokens.size && tokens[pos] matches tokenPredicate) pos + 1 else null
         override fun internalTryAgain() {
             end = null
         }
-        override fun getResult(flags: Any?) = TokenResult<T>(tokens[pos])
+        override fun getResult(flags: F) = TokenResult<T>(tokens[pos])
     }
 
-    override fun createInstance(tokens: List<Token>, pos: Int): MatcherInstance<T, Any?> {
+    override fun createInstance(tokens: List<Token>, pos: Int): MatcherInstance<T, F> {
         return Instance(tokens, pos)
     }
-    class Generator<T>{
-        fun any() = TokenParser<T>( TokenPredicate.any() )
-        fun exact(requiredToken: Token) = TokenParser<T>( TokenPredicate.exact(requiredToken) )
-        
-        inner class WhitespaceSubGenerator{
-            operator fun invoke() = TokenParser<T>( TokenPredicate.whitespace() )
-        }
-        val whitespace = WhitespaceSubGenerator()
-        
-        inner class LabelSubGenerator{
-            operator fun invoke() = TokenParser<T>( TokenPredicate.label() )
-            operator fun invoke(label: String) = exact(LabelToken(label))
-        }
-        val label = LabelSubGenerator()
-        
-        inner class StringSubGenerator{
-            operator fun invoke() = TokenParser<T>( TokenPredicate.string() )
-            fun mode(m: String) = TokenParser<T>( TokenPredicate.string(StringToken.Modes.valueOf(m.toUpperCase())) )
-            fun strong() = TokenParser<T>( TokenPredicate.string(StringToken.Modes.STRONG))
-            fun weak() = TokenParser<T>( TokenPredicate.string(StringToken.Modes.WEAK))
-        }
-        val string = StringSubGenerator()
-        
-        inner class NumberSubGenerator{
-            operator fun invoke() = TokenParser<T>( TokenPredicate.number() )
-            operator fun invoke(i: Long) = exact(NumberToken(i))
-            operator fun invoke(i: Int) = exact(NumberToken(i.toLong()))
-            operator fun invoke(d: Double) = exact(NumberToken(d))
-            operator fun invoke(min: Long, max: Long) = TokenParser<T>( TokenPredicate.number(min, max) )
-            operator fun invoke(min: Int, max: Int) = TokenParser<T>( TokenPredicate.number(min, max) )
-            operator fun invoke(min: Double, max: Double) = TokenParser<T>( TokenPredicate.number(min, max) )
-            fun integer() = TokenParser<T>( TokenPredicate.number(NumberToken.Modes.INTEGER) )
-            fun decimal() = TokenParser<T>( TokenPredicate.number(NumberToken.Modes.DECIMAL) )
-        }
-        val number = NumberSubGenerator()
-        
-        inner class SymbolSubGenerator{
-            operator fun invoke() = TokenParser<T>( TokenPredicate.symbol() )
-            operator fun invoke(c: Char) = exact(SymbolToken(c))
-            operator fun invoke(chars: Collection<Char>) = TokenParser<T>( TokenPredicate.symbol(chars) )
-        }
-        val symbol = SymbolSubGenerator()
-        
-    }
+
 }
-class SequentialParser<T, F>(val subParsers: List<Parser<T, F>>): Parser<T, F>(){
+class SequentialParser<T, F>(parsers: List<Parser<T, F>>): Parser<T, F>(){
+    constructor(vararg parsers: Parser<T, F>): this(parsers.toList())
+    val subParsers: List<Parser<T, F>>
+            = parsers.map{
+                if (it is SequentialParser){
+                    it.subParsers
+                }else{
+                    listOf(it)
+                }
+            }.flatten()
     private inner class Instance(tokens: List<Token>, pos: Int): MatcherInstance<T, F>(tokens, pos){
         override var end: Int? = null
 
@@ -179,26 +152,17 @@ class SequentialParser<T, F>(val subParsers: List<Parser<T, F>>): Parser<T, F>()
     override fun createInstance(tokens: List<Token>, pos: Int): MatcherInstance<T, F> {
         return Instance(tokens, pos)
     }
-    companion object{
-        operator fun <T, F> Parser<T, F>.rangeTo(other: Parser<T, F>): Parser<T, F> {
-            return if (this is SequentialParser) {
-                if (other is SequentialParser) {
-                    SequentialParser(this.subParsers + other.subParsers)
-                } else {
-                    SequentialParser(this.subParsers + listOf(other))
-                }
-            } else {
-                if (other is SequentialParser) {
-                    SequentialParser(listOf(this) + other.subParsers)
-                } else {
-                    SequentialParser(listOf(this, other))
-                }
-            }
-        }
-    }
 }
-class BranchedParser<T, F>(val subParsers: List<Parser<T, F>>): Parser<T, F>(){
-    constructor(vararg subParsers: Parser<T, F>): this(subParsers.toList())
+class BranchedParser<T, F>(parsers: List<Parser<T, F>>): Parser<T, F>(){
+    constructor(vararg parsers: Parser<T, F>): this(parsers.toList())
+    val subParsers: List<Parser<T, F>>
+        = parsers.map{
+            if (it is BranchedParser){
+                it.subParsers
+            }else{
+                listOf(it)
+            }
+        }.flatten()
     private inner class Instance(tokens: List<Token>, pos: Int): MatcherInstance<T, F>(tokens, pos){
         override var end: Int? = null
 
@@ -235,35 +199,20 @@ class BranchedParser<T, F>(val subParsers: List<Parser<T, F>>): Parser<T, F>(){
     override fun createInstance(tokens: List<Token>, pos: Int): MatcherInstance<T, F> {
         return Instance(tokens, pos)
     }
-
-    companion object{
-        infix fun <T, F> Parser<T, F>.or(other: Parser<T, F>): Parser<T, F> {
-            return if (this is BranchedParser) {
-                if (other is BranchedParser) {
-                    BranchedParser(this.subParsers + other.subParsers)
-                } else {
-                    BranchedParser(this.subParsers + listOf(other))
-                }
-            } else {
-                if (other is BranchedParser) {
-                    BranchedParser(listOf(this) + other.subParsers)
-                } else {
-                    BranchedParser(listOf(this, other))
-                }
-            }
-        }
+}
+data class Quantifier(val min: Int, val max: Int, val mode: Modes){
+    init{
+        assert(min >= 0)
+        assert(max >= min)
     }
+    enum class Modes{ GREEDY, POSSESSIVE, RELUCTANT }
+    fun isSingle() = min == 1 && max == 1
+    fun isEmpty() = max == 0
+
+    fun asPossessive() = this.copy(mode = Quantifier.Modes.POSSESSIVE)
+    fun asReluctant()  = this.copy(mode = Quantifier.Modes.RELUCTANT)
 }
 class QuantifiedParser<T, F>(val subParser: Parser<T, F>, val quantifier: Quantifier): Parser<T, F>(){
-    data class Quantifier(val min: Int, val max: Int, val mode: Mode){
-        init{
-            assert(min >= 0)
-            assert(max >= min)
-        }
-        enum class Mode{ GREEDY, POSSESSIVE, RELUCTANT }
-        fun isSingle() = min == 1 && max == 1
-        fun isEmpty() = max == 0
-    }
 
     private inner class GreedyInstance(tokens: List<Token>, pos: Int): MatcherInstance<T, F>(tokens, pos){
         val subInstances = mutableListOf<MatcherInstance<T, F>>()
@@ -306,7 +255,7 @@ class QuantifiedParser<T, F>(val subParser: Parser<T, F>, val quantifier: Quanti
         }
 
         override fun internalTryAgain() {
-            if (subInstances.isEmpty() || quantifier.mode == Quantifier.Mode.POSSESSIVE){
+            if (subInstances.isEmpty() || quantifier.mode == Quantifier.Modes.POSSESSIVE){
                 end = null
             }else{
                 subInstances.last().tryAgain()
@@ -370,44 +319,27 @@ class QuantifiedParser<T, F>(val subParser: Parser<T, F>, val quantifier: Quanti
 
     override fun createInstance(tokens: List<Token>, pos: Int): MatcherInstance<T, F> {
         return when(quantifier.mode){
-            Quantifier.Mode.RELUCTANT -> ReluctantInstance(tokens, pos)
+            Quantifier.Modes.RELUCTANT -> ReluctantInstance(tokens, pos)
             else -> GreedyInstance(tokens, pos)
         }
     }
 
-    companion object{
-        operator fun <T, F> Parser<T, F>.times(quantifier: Quantifier): Parser<T, F> {
-            return QuantifiedParser(this, quantifier)
-        }
-        operator fun <T, F> Parser<T, F>.times(amt: Int) = this * q(amt, amt)
 
-        fun greedy(min: Int, max: Int) = Quantifier(min, max, Quantifier.Mode.GREEDY)
-        fun reluctant(min: Int, max: Int) = Quantifier(min, max, Quantifier.Mode.RELUCTANT)
-        fun possessive(min: Int, max: Int) = Quantifier(min, max, Quantifier.Mode.POSSESSIVE)
-        fun q(min: Int, max: Int = Int.MAX_VALUE) = greedy(min, max)
-
-        val maybe = greedy(0, 1)
-
-        operator fun Quantifier.unaryPlus() = this.copy(mode = Quantifier.Mode.POSSESSIVE)
-        operator fun Quantifier.unaryMinus() = this.copy(mode = Quantifier.Mode.RELUCTANT)
-    }
 }
 
 
 
 
-class LazyParser<T, F>(initializer: ()->Parser<T, F>): Parser<T, F>(){
+class LazyParser<T, F>(val initializer: ()->Parser<T, F>): Parser<T, F>(){
     private val subParser: Parser<T, F> by lazy(initializer)
     override fun createInstance(tokens: List<Token>, pos: Int): MatcherInstance<T, F> {
         return subParser.createInstance(tokens, pos)
     }
-    companion object{
-        fun <T, F> lz(initializer: ()->Parser<T, F>) = LazyParser(initializer)
-    }
 }
 
-class TransformParser<Ti, Fi, To, Fo>(val subParser: Parser<Ti, Fi>, val handler: ((Fi)->Result<Ti>, Fo)->Result<To>): Parser<To, Fo>(){
-    private inner class Instance(tokens: List<Token>, pos: Int): MatcherInstance<To, Fo>(tokens, pos){
+
+class FlagTransformParser<T, Fi, Fo>(val subParser: Parser<T, Fi>, val flagTransform: (Fo)->Fi): Parser<T, Fo>(){
+    private inner class Instance(tokens: List<Token>, pos: Int): MatcherInstance<T, Fo>(tokens, pos){
         val subInstance = subParser.createInstance(tokens, pos)
         override val end: Int?
             get() = subInstance.end
@@ -416,24 +348,100 @@ class TransformParser<Ti, Fi, To, Fo>(val subParser: Parser<Ti, Fi>, val handler
             subInstance.tryAgain()
         }
 
-        override fun getResult(flags: Fo): Result<To> {
-            return handler(subInstance::getResult, flags)
+        override fun getResult(flags: Fo): Result<T> {
+            return subInstance.getResult(flagTransform(flags))
+        }
+    }
+
+    override fun createInstance(tokens: List<Token>, pos: Int): MatcherInstance<T, Fo> {
+        return Instance(tokens, pos)
+    }
+}
+
+class ResultTransformParser<Ti, To, F>(val subParser: Parser<Ti, F>, val resultTransform: (Result<Ti>, F)-> Result<To>): Parser<To, F>(){
+    private inner class Instance(tokens: List<Token>, pos: Int): MatcherInstance<To, F>(tokens, pos){
+        val subInstance = subParser.createInstance(tokens, pos)
+        override val end: Int?
+            get() = subInstance.end
+
+        override fun internalTryAgain() {
+            subInstance.tryAgain()
         }
 
+        override fun getResult(flags: F): Result<To> {
+            return resultTransform(subInstance.getResult(flags), flags)
+        }
     }
-    override fun createInstance(tokens: List<Token>, pos: Int): MatcherInstance<To, Fo> {
+
+    override fun createInstance(tokens: List<Token>, pos: Int): MatcherInstance<To, F> {
         return Instance(tokens, pos)
+    }
+}
+
+class TransformParser<Ti, Fi, To, Fo>(parser: Parser<Ti, Fi>, flagTransform: (Fo)->Fi, resultTransform: (Result<Ti>, Fo) -> Result<To>): WrappedParser<To, Fo>(){
+    override val internalParser: Parser<To, Fo>
+        = ResultTransformParser(FlagTransformParser(parser, flagTransform), resultTransform)
+}
+
+class FixedParser<T, F>(val subParser: Parser<*, *>, val handler: (F)->Result<T>): Parser<T, F>(){
+    private inner class Instance(tokens: List<Token>, pos: Int): MatcherInstance<T, F>(tokens, pos){
+        val subInstance = subParser.createInstance(tokens, pos)
+        override val end: Int?
+            get() = subInstance.end
+
+        override fun internalTryAgain() {
+            subInstance.tryAgain()
+        }
+
+        override fun getResult(flags: F): Result<T> {
+            return handler(flags)
+        }
+    }
+
+    override fun createInstance(tokens: List<Token>, pos: Int): MatcherInstance<T, F> {
+        return Instance(tokens, pos)
+    }
+}
+
+
+
+class BiValue<Ta, Tb> private constructor(private val mode: Modes, private val m_aVal: Ta?, private val m_bVal: Tb?){
+    private enum class Modes{A_VAL, B_VAL}
+
+    val aValue: Ta
+        get(){
+            if (!isAValue()) error("A-value not set")
+            return m_aVal as Ta
+        }
+    val bValue: Tb
+        get(){
+            if (!isBValue()) error("B-value not set")
+            return m_bVal as Tb
+        }
+
+    fun isAValue() = mode == Modes.A_VAL
+    fun isBValue() = mode == Modes.B_VAL
+
+
+    companion object{
+        fun <Ta, Tb> a(aVal: Ta) = BiValue<Ta, Tb>(Modes.A_VAL, aVal, null)
+        fun <Ta, Tb> b(bVal: Tb) = BiValue<Ta, Tb>(Modes.B_VAL, null, bVal)
+    }
+}
+
+abstract class BiParser<Ta, Fa, Tb, Fb> private constructor(): WrappedParser<BiValue<Result<Ta>, Result<Tb>>, Pair<Fa, Fb>>(){
+
+    class A<Ta, Fa, Tb, Fb>(parser: Parser<Ta, Fa>): BiParser<Ta, Fa, Tb, Fb>(){
+        override val internalParser: Parser<BiValue<Result<Ta>, Result<Tb>>, Pair<Fa, Fb>>
+                = TransformParser(parser, {(flags, _) -> flags}, {result, _ -> ValueResult(BiValue.a(result))})
+    }
+    class B<Ta, Fa, Tb, Fb>(parser: Parser<Tb, Fb>): BiParser<Ta, Fa, Tb, Fb>(){
+        override val internalParser: Parser<BiValue<Result<Ta>, Result<Tb>>, Pair<Fa, Fb>>
+                = TransformParser(parser, {(_, flags) -> flags}, {result, _ -> ValueResult(BiValue.b(result))})
     }
 
     companion object{
-        infix fun <Ti, Fi, To, Fo> Parser<Ti, Fi>.trans(handler: ((Fi)->Result<Ti>, Fo)->Result<To>)
-                = TransformParser(this, handler)
-        infix fun <Ti, Fi, To, Fo> Parser<Ti, Fi>.transValue(handler: ((Fi)->Result<Ti>, Fo)->To)
-                = TransformParser<Ti, Fi, To, Fo>(this){ resultGetter, flags -> ValueResult(handler(resultGetter, flags)) }
-
-        infix fun <Ti, To, F> Parser<Ti, F>.transResult(handler: (Result<Ti>, F)->Result<To>)
-                = TransformParser<Ti, F, To, F>(this){ resultGetter, flags -> handler(resultGetter(flags), flags)}
-        infix fun <Ti, To, F> Parser<Ti, F>.transResultValue(handler: (Result<Ti>, F)->To)
-                = TransformParser<Ti, F, To, F>(this){ resultGetter, flags -> ValueResult(handler(resultGetter(flags), flags)) }
+        fun <Ta, Fa, Tb, Fb> a(aParser: Parser<Ta, Fa>) = A<Ta, Fa, Tb, Fb>(aParser)
+        fun <Ta, Fa, Tb, Fb> b(bParser: Parser<Tb, Fb>) = B<Ta, Fa, Tb, Fb>(bParser)
     }
 }

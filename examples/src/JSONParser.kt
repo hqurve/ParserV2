@@ -1,31 +1,21 @@
 package com.hqurve.parsing.examples
 
 import com.hqurve.parsing.*
-import com.hqurve.parsing.BranchedParser.Companion.or
-import com.hqurve.parsing.LazyParser.Companion.lz
-import com.hqurve.parsing.QuantifiedParser.Companion.maybe
-import com.hqurve.parsing.QuantifiedParser.Companion.q
-import com.hqurve.parsing.QuantifiedParser.Companion.times
-import com.hqurve.parsing.SequentialParser.Companion.rangeTo
-import com.hqurve.parsing.TransformParser.Companion.transResultValue
 import kotlin.math.pow
 
 
 class JSONParser{
-    private val stringParser: Parser<String, Any?>
-    private val numberParser: Parser<Number, Any?>
-    private val kvPairParser: Parser<Pair<String, Any?>, Any?>
-    private val objectParser: Parser<Map<String, Any?>, Any?>
-    private val arrayParser: Parser<List<Any?>, Any?>
-    private lateinit var valueParser: Parser<Any?, Any?>
+    private lateinit var valueParser: Parser<Any?, Unit>
 
+
+
+    private val numberParser: Parser<Number, Unit>
     init {
-        numberParser = lz {
-            val gen = TokenParser.Generator<Number>()
-            gen.symbol('-') * maybe .. gen.number()..
-                    ( gen.label("e")..
-                            (gen.symbol('+') or gen.symbol('-')) * maybe..
-                            gen.number()
+        numberParser = builder<Unit, Unit> {
+            symbol('-') * maybe .. number()..
+                    (label("e")..
+                        symbol('+', '-') * maybe..
+                        number.integer()
                     ) * maybe
         } transResultValue { results, _ ->
             results as CompoundResult
@@ -33,17 +23,17 @@ class JSONParser{
             val number = results.tokenAt<NumberToken>(1).value
 
             val exponent =
-                if (results.compoundAt(2).isEmpty()) {
-                    null
-                } else {
-                    val innerResult = results.compoundAt(2).single() as CompoundResult
-                    val isNegated = innerResult.compoundAt(1).run {
-                        isNotEmpty() && tokenAt<SymbolToken>(0).sym == '-'
-                    }
-                    val exponent = innerResult.tokenAt<NumberToken>(2).value.toLong()
+                    if (results.compoundAt(2).isEmpty()) {
+                        null
+                    } else {
+                        val innerResult = results.compoundAt(2).single() as CompoundResult
+                        val isNegated = innerResult.compoundAt(1).run {
+                            isNotEmpty() && tokenAt<SymbolToken>(0).sym == '-'
+                        }
+                        val exponent = innerResult.tokenAt<NumberToken>(2).value.toLong()
 
-                    if (isNegated) -exponent else exponent
-                }
+                        if (isNegated) -exponent else exponent
+                    }
 
             when{
                 exponent != null -> number.toDouble() * (if (isMinus) -1 else 1) * 10.0.pow(exponent.toDouble())
@@ -53,44 +43,41 @@ class JSONParser{
             }as Number
         }
     }
-    init {
-       stringParser = lz {
-            val gen = TokenParser.Generator<String>()
-            gen.string.strong()
-        } transResultValue { results, _ ->
-            val escapedString = results.asToken<StringToken>().str
-            decodeEscapedString(escapedString)
-        }
+
+    private val stringParser = Assist.string.strong() transResultValue { results, _ ->
+        val escapedString = results.asToken<StringToken>().str
+        decodeEscapedString(escapedString)
     }
-    init{
-        kvPairParser =lz{
-            val gen = TokenParser.Generator<Any?>()
-            stringParser .. gen.symbol(':') .. valueParser
-        } transResultValue{ results, _ ->
-            results as CompoundResult
-            (results.valueAt(0) as String) to (results.valueAt(2))
-        }
-    }
-    init{
-        val gen = TokenParser.Generator<Pair<String, Any?>>()
-        objectParser = BranchedParser(
-            lz{gen.symbol('{') .. gen.symbol('}')} transResultValue {_, _ -> emptyMap<String, Any?>() },
-            lz{
-                gen.symbol('{') .. kvPairParser .. (gen.symbol(',') .. kvPairParser)*q(0) .. gen.symbol('}')
-            } transResultValue {results, _ ->
+
+    private val kvPairParser: Parser<Pair<String, Any?>, Unit>
+            = biParserBuilder<String, Unit, Any?, Unit>{
+                lz{ a(stringParser) .. symbol(':') .. b(valueParser) }
+            }.transValue({Unit to Unit}){results, _ ->
                 results as CompoundResult
-                val primary = results.valueAt(1)
-                val trailingResults = results.compoundAt(2).map{it.asCompound().valueAt(1)}
-                (listOf(primary) + trailingResults).toMap()
+                results.valueAt(0).aValue.asValue() to results.valueAt(2).bValue.asValue()
             }
+
+    private val objectParser: Parser<Map<String, Any?>, Unit>
+    init{
+        objectParser = BranchedParser(
+                builder<Unit, Unit>{ symbol('{') .. symbol('}')} fixedValue { emptyMap() },
+                builder<Pair<String, Any?>, Unit>{
+                    symbol('{') .. kvPairParser .. (symbol(',') .. kvPairParser)*q(0) .. symbol('}')
+                } transResultValue {results, _ ->
+                    results as CompoundResult
+                    val primary = results.valueAt(1)
+                    val trailingResults = results.compoundAt(2).map{it.asCompound().valueAt(1)}
+                    (listOf(primary) + trailingResults).toMap()
+                }
         )
     }
+
+    private val arrayParser: Parser<List<Any?>, Unit>
     init{
-        val gen = TokenParser.Generator<Any?>()
         arrayParser = BranchedParser(
-            lz{gen.symbol('[') .. gen.symbol(']')} transResultValue {_, _ -> emptyList<Any?>()},
+            Assist.symbol('[') .. Assist.symbol(']') fixedValue { emptyList() },
             lz{
-                gen.symbol('[') .. valueParser .. (gen.symbol(',') .. valueParser) * q(0) .. gen.symbol(']')
+                Assist.symbol('[') .. valueParser .. (Assist.symbol(',') .. valueParser) * q(0) .. Assist.symbol(']')
             } transResultValue{ results, _ ->
                 results as CompoundResult
                 val primary = results.valueAt(1)
@@ -99,15 +86,18 @@ class JSONParser{
             }
         )
     }
+
+
     init{
-        val gen = TokenParser.Generator<Any?>()
         valueParser = BranchedParser(
-            gen.label("null") transResultValue {_, _ -> null},
-            gen.label("true") transResultValue {_, _ -> true},
-            gen.label("false") transResultValue {_, _ -> false},
-            objectParser or arrayParser or numberParser or stringParser
+                Assist.label("null") fixedValue { null },
+                Assist.label("true") fixedValue { true },
+                Assist.label("false") fixedValue { false },
+                objectParser or arrayParser or numberParser or stringParser
         )
     }
+
+
     private fun decodeEscapedString(escapedString: String): String{
         val sb = StringBuilder()
 
@@ -150,8 +140,8 @@ class JSONParser{
         labelsHaveDigits = false
     )
 
-    fun parseObject(jsonString:String) = objectParser.parse(tokenizer.tokenize(jsonString), null)?.asValue()
-    fun parseArray(jsonString: String) = arrayParser.parse(tokenizer.tokenize(jsonString), null)?.asValue()
+    fun parseObject(jsonString:String) = objectParser.parse(tokenizer.tokenize(jsonString), Unit)?.asValue()
+    fun parseArray(jsonString: String) = arrayParser.parse(tokenizer.tokenize(jsonString), Unit)?.asValue()
 }
 
 fun main(){
@@ -171,7 +161,7 @@ fun main(){
                 },
                 "is happy": true,
                 "gender": "male",
-                "message": "\n
+                "message": "(This message is no longer correct and is just used for testing)\n
                 I created this general parsing engine (named \"Parser\").\n
                 By using this engine, it was very easy for me to create a jsonparser using a simple set of macros.\n
                 Moreover, a large portion of the above code is decyphering the encoded numbers and strings which cannot be avoided.\n
@@ -183,7 +173,7 @@ fun main(){
         """.replace(Regex("\\s*\\n\\s*"), "")))
         println(parseArray("""
             [
-            {"score": 12.5e2, "name":"player1", "max-level": 502}, 5
+            {"score": 12.5e2, "name":"player1", "max-level": 502}, 5e-3
             ]
         """.replace(Regex("\\s*\\n\\s*"), "")))
     }
