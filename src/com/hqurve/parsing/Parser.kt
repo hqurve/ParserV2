@@ -62,6 +62,26 @@ abstract class WrappedParser<T, F>: Parser<T, F>(){
         return internalParser.createInstance(tokens, pos)
     }
 }
+class FailProofParser<T, F>(val subParser: Parser<T, F>, val exceptionGenerator: (Int)->Exception): Parser<T, F>(){
+    constructor(subParser: Parser<T, F>, message: String): this(subParser, {pos -> Exception("Parse exception @$pos: $message")})
+
+    private inner class Instance(tokens: List<Token>, pos: Int): MatcherInstance<T, F>(tokens, pos){
+        val subInstance = subParser.createInstance(tokens, pos)
+        override val end: Int?
+            get() = subInstance.end ?: throw exceptionGenerator(pos)
+
+        override fun internalTryAgain() {
+            subInstance.tryAgain()
+        }
+
+        override fun getResult(flags: F): Result<T> {
+            return subInstance.getResult(flags)
+        }
+    }
+    override fun createInstance(tokens: List<Token>, pos: Int): MatcherInstance<T, F> {
+        return Instance(tokens, pos)
+    }
+}
 
 class EmptyParser<T, F>: Parser<T, F>(){
     private inner class Instance(tokens: List<Token>, pos: Int): MatcherInstance<T, F>(tokens, pos){

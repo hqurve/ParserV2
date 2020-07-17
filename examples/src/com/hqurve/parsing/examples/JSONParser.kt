@@ -142,8 +142,8 @@ class JSONParser{
 
     fun parseObject(jsonString:String) = objectParser.parse(tokenizer.tokenize(jsonString), Unit)?.asValue()
     fun parseArray(jsonString: String) = arrayParser.parse(tokenizer.tokenize(jsonString), Unit)?.asValue()
+    fun parseValue(jsonString: String) = valueParser.parse(tokenizer.tokenize(jsonString), Unit)?.asValue()
 }
-
 fun main(){
     val jsonParser = JSONParser()
 

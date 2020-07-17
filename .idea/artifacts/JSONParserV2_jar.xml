@@ -1,0 +1,17 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="JSONParserV2:jar">
+    <output-path>$PROJECT_DIR$/out2/artifacts/JSONParserV2_jar</output-path>
+    <root id="archive" name="ParserV2.jar">
+      <element id="directory" name="META-INF">
+        <element id="file-copy" path="$PROJECT_DIR$/src/JSON Parser Test/META-INF/MANIFEST.MF" />
+      </element>
+      <element id="module-output" name="ParserV2" />
+      <element id="module-output" name="examples" />
+      <element id="extracted-dir" path="$KOTLIN_BUNDLED$/lib/kotlin-stdlib.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$KOTLIN_BUNDLED$/lib/kotlin-reflect.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$KOTLIN_BUNDLED$/lib/kotlin-test.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$KOTLIN_BUNDLED$/lib/kotlin-stdlib-jdk7.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$KOTLIN_BUNDLED$/lib/kotlin-stdlib-jdk8.jar" path-in-jar="/" />
+    </root>
+  </artifact>
+</component>

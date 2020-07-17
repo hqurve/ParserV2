@@ -75,6 +75,10 @@ operator fun Quantifier.unaryMinus() = asReluctant()
 fun <T, F> lz(initializer: ()->Parser<T, F>) = LazyParser(initializer)
 
 
+fun <T, F> Parser<T, F>.attachError(exceptionGenerator: (Int)->Exception) = FailProofParser(this, exceptionGenerator)
+fun <T, F> Parser<T, F>.attachError(message: String) = FailProofParser(this, message)
+
+
 
 fun <Ti, Fi, To, Fo> Parser<Ti, Fi>.trans(flagsTransform: (Fo)->Fi, resultTransform: (Result<Ti>, Fo)->Result<To>)
         = TransformParser(this, flagsTransform, resultTransform)
